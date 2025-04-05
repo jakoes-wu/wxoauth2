@@ -1,7 +1,10 @@
 package com.jakoes.wxoauth2;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jakoes.wxoauth2.common.Result;
+import com.jakoes.wxoauth2.dto.WxUserInfoDTO;
+import com.jakoes.wxoauth2.model.WxAccessTokenResponse;
+import com.jakoes.wxoauth2.model.WxUserInfoResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -14,7 +17,9 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.servlet.view.RedirectView;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
@@ -47,7 +52,7 @@ public class WxController {
     @GetMapping("/index")
     public String index(Model model) {
         model.addAttribute("message", "welcome");
-        return "index"; // 移除.ftl后缀，让Spring自动解析
+        return "index";
     }
     
     @GetMapping("/wxlogin")
@@ -60,6 +65,7 @@ public class WxController {
             encodedRedirectUri = redirectUri;
         }
         
+        // snsapi_base:静默授权,snsapi_userinfo:用户确认授权
         String scope = userConfirm != null && userConfirm == 1 ? "snsapi_userinfo" : "snsapi_base";
         
         // 第一步：用户同意授权，获取code
@@ -75,59 +81,67 @@ public class WxController {
         return "redirect:" + wxAuthUrl;
     }
     
+    /**
+     * 微信授权回调处理 - 使用模板页面展示
+     */
     @GetMapping("/wxcallback")
-    public String wxCallback(@RequestParam(value = "code", required = false) String code,
-                           @RequestParam(value = "state", required = false) String state,
-                           Model model) {
+    public String wxCallback(@RequestParam(value = "code", required = false) String code,@RequestParam(value = "state", required = false) String state,Model model) {
         log.info("微信授权回调 - 收到code: {}", code);
         log.info("微信授权回调 - 收到state: {}", state);
         
+        // 创建用户DTO对象
+        WxUserInfoDTO.WxUserInfoDTOBuilder builder = WxUserInfoDTO.builder().code(code);
+        Result<WxUserInfoDTO> result;
+        
         try {
             // 第二步：通过code换取网页授权access_token
-            JsonNode tokenInfo = getAccessToken(code);
-            log.info("获取到的access_token信息: {}", tokenInfo);
+            WxAccessTokenResponse tokenResponse = getAccessToken(code);
+            log.info("获取到的access_token信息: {}", tokenResponse);
             
-            if (tokenInfo != null) {
-                String accessToken = tokenInfo.get("access_token").asText();
-                String openid = tokenInfo.get("openid").asText();
+            if (tokenResponse != null && tokenResponse.getErrcode() == null) {
+                String accessToken = tokenResponse.getAccessToken();
+                String openid = tokenResponse.getOpenid();
                 
-                model.addAttribute("accessToken", accessToken);
-                model.addAttribute("openid", openid);
+                builder.accessToken(accessToken).openid(openid);
                 
                 // 第三步：拉取用户信息(仅当scope为 snsapi_userinfo)
                 if (userConfirm != null && userConfirm == 1) {
-                    JsonNode userInfo = getUserInfo(accessToken, openid);
-                    if (userInfo != null) {
-                        String nickname = userInfo.get("nickname").asText();
-                        String headimgurl = userInfo.get("headimgurl").asText();
+                    WxUserInfoResponse userInfo = getUserInfo(accessToken, openid);
+                    if (userInfo != null && userInfo.getErrcode() == null) {
+                        builder.nickname(userInfo.getNickname())
+                               .headimgurl(userInfo.getHeadimgurl())
+                               .unionid(userInfo.getUnionid());
                         
-                        model.addAttribute("nickname", nickname);
-                        model.addAttribute("headimgurl", headimgurl);
-                        model.addAttribute("message", "授权成功，欢迎 " + nickname);
+                        result = Result.success("授权成功，欢迎 " + userInfo.getNickname(), builder.build());
                     } else {
-                        model.addAttribute("message", "获取用户信息失败");
+                        String errorMsg = userInfo != null ? userInfo.getErrmsg() : "获取用户信息失败";
+                        result = Result.fail(errorMsg);
                     }
                 } else {
-                    model.addAttribute("message", "授权成功，用户openid: " + openid);
+                    result = Result.success("授权成功，用户openid: " + openid, builder.build());
                 }
             } else {
-                model.addAttribute("message", "获取access_token失败");
+                String errorMsg = tokenResponse != null ? tokenResponse.getErrmsg() : "获取access_token失败";
+                result = Result.fail(errorMsg);
             }
         } catch (Exception e) {
             log.error("获取access_token异常: {}", e.getMessage(), e);
-            model.addAttribute("message", "获取access_token异常: " + e.getMessage());
+            result = Result.fail(e.getMessage());
         }
         
-        model.addAttribute("code", code);
+        // 将结果放入model
+        model.addAttribute("result", result);
         return "index";
     }
+    
+    
 
     /**
      * 根据code获取微信access_token
      * @param code 授权码
-     * @return 微信返回的JSON结果
+     * @return 微信返回的access_token响应
      */
-    private JsonNode getAccessToken(String code) {
+    private WxAccessTokenResponse getAccessToken(String code) {
         // 构建请求URL
         String url = "https://api.weixin.qq.com/sns/oauth2/access_token" +
                 "?appid=" + appid +
@@ -143,7 +157,7 @@ public class WxController {
                 if (entity != null) {
                     String result = EntityUtils.toString(entity);
                     log.info("微信返回结果[access_token]: {}", result);
-                    return objectMapper.readTree(result);
+                    return objectMapper.readValue(result, WxAccessTokenResponse.class);
                 }
             }
         } catch (IOException e) {
@@ -159,7 +173,7 @@ public class WxController {
      * @param openid 用户openid
      * @return 用户信息
      */
-    private JsonNode getUserInfo(String accessToken, String openid) {
+    private WxUserInfoResponse getUserInfo(String accessToken, String openid) {
         String url = "https://api.weixin.qq.com/sns/userinfo" +
                 "?access_token=" + accessToken +
                 "&openid=" + openid +
@@ -173,7 +187,7 @@ public class WxController {
                 if (entity != null) {
                     String result = EntityUtils.toString(entity);
                     log.info("微信返回结果[userinfo]: {}", result);
-                    return objectMapper.readTree(result);
+                    return objectMapper.readValue(result, WxUserInfoResponse.class);
                 }
             }
         } catch (IOException e) {
