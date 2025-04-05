@@ -1,6 +1,7 @@
 # 微信网页授权项目 (WxOAuth2)
 
 这是一个基于Spring Boot的微信网页授权示例项目，实现了完整的微信OAuth2.0授权流程，可用于微信公众号网页授权登录。
+微信官网开发文档：https://developers.weixin.qq.com/doc/offiaccount/OA_Web_Apps/Wechat_webpage_authorization.html
 
 ## 功能特点
 

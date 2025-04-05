@@ -1,5 +1,14 @@
 package com.jakoes.wxoauth2;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -10,23 +19,19 @@ import org.springframework.web.servlet.view.RedirectView;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
-import org.apache.http.HttpEntity;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
-import org.apache.http.util.EntityUtils;
 import java.io.IOException;
 
 /**
  * @author jakoes
  * @date 2025/4/5
+ * 微信官网技术文档：https://developers.weixin.qq.com/doc/offiaccount/OA_Web_Apps/Wechat_webpage_authorization.html
  */
+@Slf4j
 @Controller
 public class WxController {
-
+    
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    
     @Value("${oauth.wx.appid}")
     private String appid;
 
@@ -66,7 +71,7 @@ public class WxController {
                 "&state=STATE" +
                 "#wechat_redirect";
 
-        System.out.println("请求微信URL: " + wxAuthUrl);
+        log.info("请求微信URL: {}", wxAuthUrl);
         return "redirect:" + wxAuthUrl;
     }
     
@@ -74,27 +79,27 @@ public class WxController {
     public String wxCallback(@RequestParam(value = "code", required = false) String code,
                            @RequestParam(value = "state", required = false) String state,
                            Model model) {
-        System.out.println("微信授权回调 - 收到code: " + code);
-        System.out.println("微信授权回调 - 收到state: " + state);
+        log.info("微信授权回调 - 收到code: {}", code);
+        log.info("微信授权回调 - 收到state: {}", state);
         
         try {
             // 第二步：通过code换取网页授权access_token
-            JSONObject tokenInfo = getAccessToken(code);
-            System.out.println("获取到的access_token信息: " + tokenInfo);
+            JsonNode tokenInfo = getAccessToken(code);
+            log.info("获取到的access_token信息: {}", tokenInfo);
             
             if (tokenInfo != null) {
-                String accessToken = tokenInfo.getString("access_token");
-                String openid = tokenInfo.getString("openid");
+                String accessToken = tokenInfo.get("access_token").asText();
+                String openid = tokenInfo.get("openid").asText();
                 
                 model.addAttribute("accessToken", accessToken);
                 model.addAttribute("openid", openid);
                 
                 // 第三步：拉取用户信息(仅当scope为 snsapi_userinfo)
                 if (userConfirm != null && userConfirm == 1) {
-                    JSONObject userInfo = getUserInfo(accessToken, openid);
+                    JsonNode userInfo = getUserInfo(accessToken, openid);
                     if (userInfo != null) {
-                        String nickname = userInfo.getString("nickname");
-                        String headimgurl = userInfo.getString("headimgurl");
+                        String nickname = userInfo.get("nickname").asText();
+                        String headimgurl = userInfo.get("headimgurl").asText();
                         
                         model.addAttribute("nickname", nickname);
                         model.addAttribute("headimgurl", headimgurl);
@@ -109,7 +114,7 @@ public class WxController {
                 model.addAttribute("message", "获取access_token失败");
             }
         } catch (Exception e) {
-            System.out.println("获取access_token异常: " + e.getMessage());
+            log.error("获取access_token异常: {}", e.getMessage(), e);
             model.addAttribute("message", "获取access_token异常: " + e.getMessage());
         }
         
@@ -122,7 +127,7 @@ public class WxController {
      * @param code 授权码
      * @return 微信返回的JSON结果
      */
-    private JSONObject getAccessToken(String code) {
+    private JsonNode getAccessToken(String code) {
         // 构建请求URL
         String url = "https://api.weixin.qq.com/sns/oauth2/access_token" +
                 "?appid=" + appid +
@@ -132,18 +137,17 @@ public class WxController {
         
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
             HttpGet httpGet = new HttpGet(url);
-            System.out.println("请求微信URL: " + url);
+            log.info("请求微信URL: {}", url);
             try (CloseableHttpResponse response = httpClient.execute(httpGet)) {
                 HttpEntity entity = response.getEntity();
                 if (entity != null) {
                     String result = EntityUtils.toString(entity);
-                    System.out.println("微信返回结果[access_token]: " + result);
-                    return JSON.parseObject(result);
+                    log.info("微信返回结果[access_token]: {}", result);
+                    return objectMapper.readTree(result);
                 }
             }
         } catch (IOException e) {
-            System.out.println("请求微信access_token异常: " + e.getMessage());
-            e.printStackTrace();
+            log.error("请求微信access_token异常: {}", e.getMessage(), e);
         }
         
         return null;
@@ -155,7 +159,7 @@ public class WxController {
      * @param openid 用户openid
      * @return 用户信息
      */
-    private JSONObject getUserInfo(String accessToken, String openid) {
+    private JsonNode getUserInfo(String accessToken, String openid) {
         String url = "https://api.weixin.qq.com/sns/userinfo" +
                 "?access_token=" + accessToken +
                 "&openid=" + openid +
@@ -163,18 +167,17 @@ public class WxController {
         
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
             HttpGet httpGet = new HttpGet(url);
-            System.out.println("请求微信URL: " + url);
+            log.info("请求微信URL: {}", url);
             try (CloseableHttpResponse response = httpClient.execute(httpGet)) {
                 HttpEntity entity = response.getEntity();
                 if (entity != null) {
                     String result = EntityUtils.toString(entity);
-                    System.out.println("微信返回结果[userinfo]: " + result);
-                    return JSON.parseObject(result);
+                    log.info("微信返回结果[userinfo]: {}", result);
+                    return objectMapper.readTree(result);
                 }
             }
         } catch (IOException e) {
-            System.out.println("获取用户信息异常: " + e.getMessage());
-            e.printStackTrace();
+            log.error("获取用户信息异常: {}", e.getMessage(), e);
         }
         return null;
     }
