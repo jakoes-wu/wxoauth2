@@ -69,13 +69,8 @@ public class WxController {
         String scope = userConfirm != null && userConfirm == 1 ? "snsapi_userinfo" : "snsapi_base";
         
         // 第一步：用户同意授权，获取code
-        String wxAuthUrl = "https://open.weixin.qq.com/connect/oauth2/authorize" +
-                "?appid=" + appid +
-                "&redirect_uri=" + encodedRedirectUri +
-                "&response_type=code" +
-                "&scope=" + scope +
-                "&state=STATE" +
-                "#wechat_redirect";
+        String wxAuthUrlTemplate = "https://open.weixin.qq.com/connect/oauth2/authorize?appid=%s&redirect_uri=%s&response_type=code&scope=%s&state=STATE#wechat_redirect";
+        String wxAuthUrl = String.format(wxAuthUrlTemplate, appid, encodedRedirectUri, scope);
 
         log.info("请求微信URL: {}", wxAuthUrl);
         return "redirect:" + wxAuthUrl;
@@ -96,7 +91,6 @@ public class WxController {
         try {
             // 第二步：通过code换取网页授权access_token
             WxAccessTokenResponse tokenResponse = getAccessToken(code);
-            log.info("获取到的access_token信息: {}", tokenResponse);
             
             if (tokenResponse != null && tokenResponse.getErrcode() == null) {
                 String accessToken = tokenResponse.getAccessToken();
@@ -143,11 +137,8 @@ public class WxController {
      */
     private WxAccessTokenResponse getAccessToken(String code) {
         // 构建请求URL
-        String url = "https://api.weixin.qq.com/sns/oauth2/access_token" +
-                "?appid=" + appid +
-                "&secret=" + appsecret +
-                "&code=" + code +
-                "&grant_type=authorization_code";
+        String urlTemplate = "https://api.weixin.qq.com/sns/oauth2/access_token?appid=%s&secret=%s&code=%s&grant_type=authorization_code";
+        String url = String.format(urlTemplate, appid, appsecret, code);
         
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
             HttpGet httpGet = new HttpGet(url);
@@ -174,10 +165,8 @@ public class WxController {
      * @return 用户信息
      */
     private WxUserInfoResponse getUserInfo(String accessToken, String openid) {
-        String url = "https://api.weixin.qq.com/sns/userinfo" +
-                "?access_token=" + accessToken +
-                "&openid=" + openid +
-                "&lang=zh_CN";
+        String urlTemplate = "https://api.weixin.qq.com/sns/userinfo?access_token=%s&openid=%s&lang=zh_CN";
+        String url = String.format(urlTemplate, accessToken, openid);
         
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
             HttpGet httpGet = new HttpGet(url);
