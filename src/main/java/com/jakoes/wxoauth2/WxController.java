@@ -122,9 +122,17 @@ public class WxController {
             log.error("获取access_token异常: {}", e.getMessage(), e);
             result = Result.fail(e.getMessage());
         }
+        // 将result对象转换为JSON字符串并打印
+        try {
+            String resultJson = objectMapper.writeValueAsString(result);
+            log.info("返回前端数据: {}", resultJson);
+        } catch (IOException e) {
+            log.error("转换结果为JSON异常: {}", e.getMessage());
+        }
         
         // 将结果放入model
         model.addAttribute("result", result);
+        
         return "index";
     }
     
